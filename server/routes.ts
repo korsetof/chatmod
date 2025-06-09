@@ -1,12 +1,13 @@
 import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertUserSchema, insertMessageSchema, insertChatRoomSchema, insertChatMessageSchema, insertRoomMemberSchema, insertMediaItemSchema, insertLikeSchema } from "@shared/schema";
+import { insertUserSchema, insertMessageSchema, insertChatRoomSchema, insertChatMessageSchema, insertRoomMemberSchema, insertMediaItemSchema, insertLikeSchema, insertVerificationCodeSchema } from "@shared/schema";
 import { WebSocketServer, WebSocket } from "ws";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { z } from "zod";
+import { sendVerificationEmail, generateVerificationCode, getMimeTypeFromExtension, getMediaTypeFromMime } from "./email";
 
 // Set up multer for file uploads
 const uploadDir = path.join(process.cwd(), 'uploads');

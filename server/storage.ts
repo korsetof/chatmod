@@ -162,6 +162,15 @@ export class MemStorage implements IStorage {
       profilePicture: "",
       profileHtml: "",
       theme: "default",
+      emailVerified: false,
+      verificationCode: null,
+      role: "user",
+      isOnline: false,
+      lastSeen: now,
+      isBanned: false,
+      bannedBy: null,
+      bannedAt: null,
+      banReason: null,
       createdAt: now 
     };
     this.users.set(id, user);
@@ -187,7 +196,14 @@ export class MemStorage implements IStorage {
   async createMessage(message: InsertMessage): Promise<Message> {
     const id = this.currentMessageId++;
     const now = new Date();
-    const newMessage: Message = { ...message, id, read: false, createdAt: now };
+    const newMessage: Message = { 
+      ...message, 
+      id, 
+      read: false, 
+      createdAt: now,
+      mediaType: message.mediaType || "text",
+      mediaUrl: message.mediaUrl || ""
+    };
     this.messages.set(id, newMessage);
     return newMessage;
   }
@@ -218,12 +234,18 @@ export class MemStorage implements IStorage {
   async createChatRoom(room: InsertChatRoom): Promise<ChatRoom> {
     const id = this.currentChatRoomId++;
     const now = new Date();
-    const newRoom: ChatRoom = { ...room, id, createdAt: now };
+    const newRoom: ChatRoom = { 
+      ...room, 
+      id, 
+      createdAt: now,
+      description: room.description || "",
+      isPrivate: room.isPrivate || false
+    };
     this.chatRooms.set(id, newRoom);
     
     // Add creator as a member if this is a user-created room
     if (room.createdBy > 0) {
-      await this.addUserToRoom({ roomId: id, userId: room.createdBy });
+      await this.addUserToRoom({ roomId: id, userId: room.createdBy, role: "admin" });
     }
     
     return newRoom;
@@ -250,7 +272,13 @@ export class MemStorage implements IStorage {
   async createChatMessage(message: InsertChatMessage): Promise<ChatMessage> {
     const id = this.currentChatMessageId++;
     const now = new Date();
-    const newMessage: ChatMessage = { ...message, id, createdAt: now };
+    const newMessage: ChatMessage = { 
+      ...message, 
+      id, 
+      createdAt: now,
+      mediaType: message.mediaType || "text",
+      mediaUrl: message.mediaUrl || ""
+    };
     this.chatMessages.set(id, newMessage);
     return newMessage;
   }
@@ -265,7 +293,13 @@ export class MemStorage implements IStorage {
   async addUserToRoom(member: InsertRoomMember): Promise<RoomMember> {
     const id = this.currentRoomMemberId++;
     const now = new Date();
-    const newMember: RoomMember = { ...member, id, createdAt: now };
+    const newMember: RoomMember = { 
+      ...member, 
+      id, 
+      createdAt: now,
+      role: member.role || "member",
+      joinedAt: now
+    };
     this.roomMembers.set(id, newMember);
     return newMember;
   }
@@ -292,7 +326,13 @@ export class MemStorage implements IStorage {
   async createMediaItem(item: InsertMediaItem): Promise<MediaItem> {
     const id = this.currentMediaItemId++;
     const now = new Date();
-    const newItem: MediaItem = { ...item, id, createdAt: now };
+    const newItem: MediaItem = { 
+      ...item, 
+      id, 
+      createdAt: now,
+      description: item.description || "",
+      isPublic: item.isPublic !== undefined ? item.isPublic : true
+    };
     this.mediaItems.set(id, newItem);
     return newItem;
   }
@@ -361,6 +401,170 @@ export class MemStorage implements IStorage {
     
     return Array.from(this.users.values())
       .filter(user => matchUserIds.includes(user.id));
+  }
+
+  // New methods for enhanced functionality
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    return Array.from(this.users.values()).find(user => user.email === email);
+  }
+
+  async searchUsersByUsername(query: string): Promise<User[]> {
+    const searchTerm = query.toLowerCase().replace('@', '');
+    return Array.from(this.users.values())
+      .filter(user => 
+        user.username.toLowerCase().includes(searchTerm) ||
+        user.displayName.toLowerCase().includes(searchTerm)
+      )
+      .filter(user => !user.isBanned)
+      .slice(0, 10); // Limit results
+  }
+
+  async updateUserOnlineStatus(userId: number, isOnline: boolean): Promise<void> {
+    const user = await this.getUser(userId);
+    if (user) {
+      const updatedUser = { 
+        ...user, 
+        isOnline, 
+        lastSeen: new Date() 
+      };
+      this.users.set(userId, updatedUser);
+    }
+  }
+
+  async banUser(userId: number, bannedBy: number, reason: string): Promise<void> {
+    const user = await this.getUser(userId);
+    if (user) {
+      const updatedUser = { 
+        ...user, 
+        isBanned: true, 
+        bannedBy, 
+        bannedAt: new Date(), 
+        banReason: reason 
+      };
+      this.users.set(userId, updatedUser);
+      
+      // Log admin action
+      await this.createAdminLog({
+        adminId: bannedBy,
+        action: "ban_user",
+        targetType: "user",
+        targetId: userId,
+        details: { reason }
+      });
+    }
+  }
+
+  async unbanUser(userId: number): Promise<void> {
+    const user = await this.getUser(userId);
+    if (user) {
+      const updatedUser = { 
+        ...user, 
+        isBanned: false, 
+        bannedBy: null, 
+        bannedAt: null, 
+        banReason: null 
+      };
+      this.users.set(userId, updatedUser);
+    }
+  }
+
+  async deleteChatRoom(roomId: number): Promise<void> {
+    this.chatRooms.delete(roomId);
+    
+    // Remove all members from the room
+    for (const [id, member] of this.roomMembers.entries()) {
+      if (member.roomId === roomId) {
+        this.roomMembers.delete(id);
+      }
+    }
+    
+    // Remove all messages from the room
+    for (const [id, message] of this.chatMessages.entries()) {
+      if (message.roomId === roomId) {
+        this.chatMessages.delete(id);
+      }
+    }
+  }
+
+  async updateChatRoom(roomId: number, data: Partial<ChatRoom>): Promise<ChatRoom | undefined> {
+    const room = await this.getChatRoomById(roomId);
+    if (!room) return undefined;
+    
+    const updatedRoom = { ...room, ...data };
+    this.chatRooms.set(roomId, updatedRoom);
+    return updatedRoom;
+  }
+
+  async updateRoomMemberRole(roomId: number, userId: number, role: string): Promise<void> {
+    for (const [id, member] of this.roomMembers.entries()) {
+      if (member.roomId === roomId && member.userId === userId) {
+        const updatedMember = { ...member, role };
+        this.roomMembers.set(id, updatedMember);
+        break;
+      }
+    }
+  }
+
+  async getRoomMemberRole(roomId: number, userId: number): Promise<string | undefined> {
+    const member = Array.from(this.roomMembers.values())
+      .find(m => m.roomId === roomId && m.userId === userId);
+    return member?.role || undefined;
+  }
+
+  // Admin operations
+  async createAdminLog(log: InsertAdminLog): Promise<AdminLog> {
+    const id = this.currentAdminLogId++;
+    const now = new Date();
+    const newLog: AdminLog = { ...log, id, createdAt: now };
+    this.adminLogs.set(id, newLog);
+    return newLog;
+  }
+
+  async getAdminLogs(limit = 50): Promise<AdminLog[]> {
+    return Array.from(this.adminLogs.values())
+      .sort((a, b) => (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0))
+      .slice(0, limit);
+  }
+
+  // Verification operations
+  async createVerificationCode(code: InsertVerificationCode): Promise<VerificationCode> {
+    const id = this.currentVerificationCodeId++;
+    const now = new Date();
+    const newCode: VerificationCode = { 
+      ...code, 
+      id, 
+      createdAt: now,
+      used: false
+    };
+    this.verificationCodes.set(id, newCode);
+    return newCode;
+  }
+
+  async getVerificationCode(email: string, code: string, type: string): Promise<VerificationCode | undefined> {
+    return Array.from(this.verificationCodes.values())
+      .find(vc => 
+        vc.email === email && 
+        vc.code === code && 
+        vc.type === type && 
+        !vc.used &&
+        vc.expiresAt > new Date()
+      );
+  }
+
+  async markVerificationCodeAsUsed(id: number): Promise<void> {
+    const code = this.verificationCodes.get(id);
+    if (code) {
+      this.verificationCodes.set(id, { ...code, used: true });
+    }
+  }
+
+  async cleanupExpiredCodes(): Promise<void> {
+    const now = new Date();
+    for (const [id, code] of this.verificationCodes.entries()) {
+      if (code.expiresAt < now) {
+        this.verificationCodes.delete(id);
+      }
+    }
   }
 }
 
