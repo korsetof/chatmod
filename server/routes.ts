@@ -572,5 +572,242 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // New enhanced API routes
+
+  // User search by username (with @ support)
+  app.get('/api/users/search', async (req, res) => {
+    try {
+      const query = req.query.q as string;
+      if (!query) {
+        return res.status(400).json({ message: 'Query parameter required' });
+      }
+      
+      const users = await storage.searchUsersByUsername(query);
+      
+      // Remove passwords from response
+      const usersWithoutPasswords = users.map(user => {
+        const { password, ...userWithoutPassword } = user;
+        return userWithoutPassword;
+      });
+      
+      res.status(200).json(usersWithoutPasswords);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to search users' });
+    }
+  });
+
+  // Update user online status
+  app.patch('/api/users/:userId/online-status', async (req, res) => {
+    try {
+      const userId = parseInt(req.params.userId);
+      const { isOnline } = req.body;
+      
+      await storage.updateUserOnlineStatus(userId, isOnline);
+      
+      res.status(200).json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to update online status' });
+    }
+  });
+
+  // Email verification routes
+  app.post('/api/auth/send-verification', async (req, res) => {
+    try {
+      const { email } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ message: 'Email is required' });
+      }
+      
+      // Check if user already exists
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser && existingUser.emailVerified) {
+        return res.status(400).json({ message: 'Email already verified' });
+      }
+      
+      const code = generateVerificationCode();
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+      
+      await storage.createVerificationCode({
+        email,
+        code,
+        type: 'registration',
+        expiresAt
+      });
+      
+      const emailSent = await sendVerificationEmail(email, code);
+      
+      if (!emailSent) {
+        return res.status(500).json({ message: 'Failed to send verification email' });
+      }
+      
+      res.status(200).json({ message: 'Verification code sent' });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to send verification code' });
+    }
+  });
+
+  app.post('/api/auth/verify-email', async (req, res) => {
+    try {
+      const { email, code } = req.body;
+      
+      if (!email || !code) {
+        return res.status(400).json({ message: 'Email and code are required' });
+      }
+      
+      const verificationCode = await storage.getVerificationCode(email, code, 'registration');
+      
+      if (!verificationCode) {
+        return res.status(400).json({ message: 'Invalid or expired verification code' });
+      }
+      
+      // Mark code as used
+      await storage.markVerificationCodeAsUsed(verificationCode.id);
+      
+      // Update user email verification status
+      const user = await storage.getUserByEmail(email);
+      if (user) {
+        await storage.updateUserProfile(user.id, { emailVerified: true });
+      }
+      
+      res.status(200).json({ message: 'Email verified successfully' });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to verify email' });
+    }
+  });
+
+  // Admin routes
+  app.get('/api/admin/logs', async (req, res) => {
+    try {
+      // Check if user is admin (in real app, verify JWT token)
+      const limit = parseInt(req.query.limit as string) || 50;
+      
+      const logs = await storage.getAdminLogs(limit);
+      
+      res.status(200).json(logs);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to get admin logs' });
+    }
+  });
+
+  app.post('/api/admin/ban-user', async (req, res) => {
+    try {
+      const { userId, adminId, reason } = req.body;
+      
+      if (!userId || !adminId || !reason) {
+        return res.status(400).json({ message: 'Missing required fields' });
+      }
+      
+      await storage.banUser(userId, adminId, reason);
+      
+      res.status(200).json({ message: 'User banned successfully' });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to ban user' });
+    }
+  });
+
+  app.post('/api/admin/unban-user', async (req, res) => {
+    try {
+      const { userId } = req.body;
+      
+      if (!userId) {
+        return res.status(400).json({ message: 'User ID is required' });
+      }
+      
+      await storage.unbanUser(userId);
+      
+      res.status(200).json({ message: 'User unbanned successfully' });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to unban user' });
+    }
+  });
+
+  // Room management routes
+  app.delete('/api/chat-rooms/:roomId', async (req, res) => {
+    try {
+      const roomId = parseInt(req.params.roomId);
+      
+      await storage.deleteChatRoom(roomId);
+      
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to delete room' });
+    }
+  });
+
+  app.patch('/api/chat-rooms/:roomId', async (req, res) => {
+    try {
+      const roomId = parseInt(req.params.roomId);
+      const updates = req.body;
+      
+      const updatedRoom = await storage.updateChatRoom(roomId, updates);
+      
+      if (!updatedRoom) {
+        return res.status(404).json({ message: 'Room not found' });
+      }
+      
+      res.status(200).json(updatedRoom);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to update room' });
+    }
+  });
+
+  // Room member role management
+  app.patch('/api/room-members/:roomId/:userId/role', async (req, res) => {
+    try {
+      const roomId = parseInt(req.params.roomId);
+      const userId = parseInt(req.params.userId);
+      const { role } = req.body;
+      
+      if (!role) {
+        return res.status(400).json({ message: 'Role is required' });
+      }
+      
+      await storage.updateRoomMemberRole(roomId, userId, role);
+      
+      res.status(200).json({ message: 'Role updated successfully' });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to update role' });
+    }
+  });
+
+  app.get('/api/room-members/:roomId/:userId/role', async (req, res) => {
+    try {
+      const roomId = parseInt(req.params.roomId);
+      const userId = parseInt(req.params.userId);
+      
+      const role = await storage.getRoomMemberRole(roomId, userId);
+      
+      if (!role) {
+        return res.status(404).json({ message: 'Member not found in room' });
+      }
+      
+      res.status(200).json({ role });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to get member role' });
+    }
+  });
+
+  // File type detection route
+  app.post('/api/detect-file-type', upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: 'No file uploaded' });
+      }
+      
+      const mimeType = getMimeTypeFromExtension(req.file.originalname);
+      const mediaType = getMediaTypeFromMime(mimeType);
+      
+      res.status(200).json({
+        filename: req.file.originalname,
+        mimeType,
+        mediaType,
+        size: req.file.size
+      });
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to detect file type' });
+    }
+  });
+
   return httpServer;
 }
