@@ -155,7 +155,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: 'Username already exists' });
       }
       
-      const user = await storage.createUser(userData);
+      // Check if email already exists
+      const existingEmail = await storage.getUserByEmail(userData.email);
+      if (existingEmail) {
+        return res.status(400).json({ message: 'Email already exists' });
+      }
+      
+      // Create user with emailVerified: false
+      const user = await storage.createUser({
+        ...userData,
+        emailVerified: false
+      });
+      
+      // Send verification email
+      const code = generateVerificationCode();
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+      
+      await storage.createVerificationCode({
+        email: userData.email,
+        code,
+        type: 'registration',
+        expiresAt
+      });
+      
+      await sendVerificationEmail(userData.email, code);
       
       // Don't return password in response
       const { password, ...userWithoutPassword } = user;
