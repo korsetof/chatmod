@@ -13,6 +13,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { insertUserSchema } from "@shared/schema";
 import { useAuth } from "@/lib/auth-context";
 import { useLanguage } from "@/lib/language-context";
+import { EmailVerification } from "@/components/EmailVerification";
 
 const loginSchema = z.object({
   username: z.string().min(3, { message: "Username must be at least 3 characters long" }),
@@ -22,6 +23,7 @@ const loginSchema = z.object({
 const registerSchema = insertUserSchema.extend({
   password: z.string().min(6, { message: "Password must be at least 6 characters long" }),
   confirmPassword: z.string(),
+  email: z.string().email({ message: "Please enter a valid email address" }),
 }).refine(data => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
@@ -29,10 +31,30 @@ const registerSchema = insertUserSchema.extend({
 
 export function AuthForms() {
   const [activeTab, setActiveTab] = React.useState("login");
+  const [showEmailVerification, setShowEmailVerification] = React.useState(false);
+  const [registeredEmail, setRegisteredEmail] = React.useState("");
   const { toast } = useToast();
   const [_, navigate] = useLocation();
   const { login } = useAuth();
   const { t } = useLanguage();
+
+  if (showEmailVerification) {
+    return (
+      <div className="w-full max-w-md mx-auto">
+        <EmailVerification 
+          email={registeredEmail}
+          onVerificationComplete={() => {
+            setShowEmailVerification(false);
+            toast({
+              title: "Аккаунт создан",
+              description: "Ваш аккаунт успешно создан и подтвержден. Теперь вы можете войти.",
+            });
+            setActiveTab("login");
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <Card className="w-full max-w-md mx-auto">
@@ -53,12 +75,9 @@ export function AuthForms() {
             }} />
           </TabsContent>
           <TabsContent value="register">
-            <RegisterForm onSuccess={() => {
-              toast({
-                title: t('success'),
-                description: "Your account has been created successfully. You can now log in.",
-              });
-              setActiveTab("login");
+            <RegisterForm onSuccess={(email: string) => {
+              setRegisteredEmail(email);
+              setShowEmailVerification(true);
             }} />
           </TabsContent>
         </Tabs>
@@ -151,7 +170,7 @@ function LoginForm({ onSuccess }: LoginFormProps) {
 }
 
 interface RegisterFormProps {
-  onSuccess: () => void;
+  onSuccess: (email: string) => void;
 }
 
 function RegisterForm({ onSuccess }: RegisterFormProps) {
@@ -163,6 +182,7 @@ function RegisterForm({ onSuccess }: RegisterFormProps) {
     defaultValues: {
       username: "",
       displayName: "",
+      email: "",
       password: "",
       confirmPassword: "",
     },
@@ -176,8 +196,8 @@ function RegisterForm({ onSuccess }: RegisterFormProps) {
       // Remove confirmPassword as it's not part of our API schema
       const { confirmPassword, ...userData } = values;
       
-      const response = await apiRequest('POST', '/api/auth/register', userData);
-      onSuccess();
+      const response = await apiRequest('/api/auth/register', 'POST', userData);
+      onSuccess(values.email);
     } catch (error) {
       toast({
         title: t('error'),
