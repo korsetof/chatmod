@@ -1,12 +1,25 @@
-import { MailService } from '@sendgrid/mail';
+import nodemailer from 'nodemailer';
 
-if (!process.env.SENDGRID_API_KEY) {
-  console.warn("SENDGRID_API_KEY environment variable not set. Email functionality will be disabled.");
-}
+// Gmail SMTP configuration
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER || 'your-email@gmail.com',
+    pass: process.env.GMAIL_APP_PASSWORD || 'your-app-password'
+  }
+});
 
-const mailService = new MailService();
-if (process.env.SENDGRID_API_KEY) {
-  mailService.setApiKey(process.env.SENDGRID_API_KEY);
+// Test the connection
+if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+  transporter.verify((error: any, success: any) => {
+    if (error) {
+      console.log('Email service error:', error);
+    } else {
+      console.log('Email service ready');
+    }
+  });
+} else {
+  console.log("Gmail credentials not set. Using console logging for development.");
 }
 
 interface EmailParams {
@@ -18,22 +31,23 @@ interface EmailParams {
 }
 
 export async function sendEmail(params: EmailParams): Promise<boolean> {
-  if (!process.env.SENDGRID_API_KEY) {
+  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
     console.log(`Email would be sent to ${params.to}: ${params.subject}`);
+    console.log(`Code: ${params.text?.match(/\d{6}/)?.[0] || 'N/A'}`);
     return true; // Return success for development
   }
 
   try {
-    await mailService.send({
+    await transporter.sendMail({
+      from: process.env.GMAIL_USER,
       to: params.to,
-      from: params.from,
       subject: params.subject,
       text: params.text,
       html: params.html,
     });
     return true;
   } catch (error) {
-    console.error('SendGrid email error:', error);
+    console.error('Gmail email error:', error);
     return false;
   }
 }
@@ -45,7 +59,7 @@ export function generateVerificationCode(): string {
 export async function sendVerificationEmail(email: string, code: string): Promise<boolean> {
   return sendEmail({
     to: email,
-    from: 'noreply@app.com', // Replace with your verified sender
+    from: process.env.GMAIL_USER || 'noreply@app.com',
     subject: 'Подтверждение email',
     html: `
       <h2>Подтверждение регистрации</h2>
