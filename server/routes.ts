@@ -1,13 +1,18 @@
-import express, { type Express } from "express";
+import express, { type Express, type Request } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertUserSchema, insertMessageSchema, insertChatRoomSchema, insertChatMessageSchema, insertRoomMemberSchema, insertMediaItemSchema, insertLikeSchema, insertVerificationCodeSchema } from "@shared/schema";
 import { WebSocketServer, WebSocket } from "ws";
-import multer from "multer";
+import multer, { type Multer } from "multer";
 import path from "path";
 import fs from "fs";
 import { z } from "zod";
 import { sendVerificationEmail, generateVerificationCode, getMimeTypeFromExtension, getMediaTypeFromMime } from "./email";
+
+// Extend Express Request type to include file property
+interface MulterRequest extends Request {
+  file?: Express.Multer.File;
+}
 
 // Set up multer for file uploads
 const uploadDir = path.join(process.cwd(), 'uploads');
@@ -60,77 +65,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
   wss.on('connection', (ws) => {
     let userId: number | null = null;
     
-    ws.on('message', async (message) => {
-      try {
-        const data = JSON.parse(message.toString());
-        
-        // Handle authentication
-        if (data.type === 'auth') {
-          userId = data.userId;
+    ws.on('message', (message) => {
+      (async () => {
+        try {
+          const data = JSON.parse(message.toString());
           
-          // Store client connection
-          if (!clients.has(userId)) {
-            clients.set(userId, []);
-          }
-          clients.get(userId)?.push(ws);
-          
-          ws.send(JSON.stringify({ type: 'auth_success' }));
-        }
-        
-        // Handle different message types
-        if (data.type === 'private_message' && userId) {
-          const receiverConnections = clients.get(data.receiverId) || [];
-          
-          // Save message to database
-          const message = await storage.createMessage({
-            senderId: userId,
-            receiverId: data.receiverId,
-            content: data.content,
-            mediaType: data.mediaType || 'text',
-            mediaUrl: data.mediaUrl || '',
-          });
-          
-          // Send message to recipient if online
-          receiverConnections.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) {
-              client.send(JSON.stringify({
-                type: 'private_message',
-                message
-              }));
+          // Handle authentication
+          if (data.type === 'auth' && typeof data.userId === 'number') {
+            userId = data.userId;
+            
+            // Store client connection
+            if (!clients.has(userId)) {
+              clients.set(userId, []);
             }
-          });
-        }
-        
-        // Handle chat room messages
-        if (data.type === 'chat_message' && userId) {
-          // Save message to database
-          const chatMessage = await storage.createChatMessage({
-            roomId: data.roomId,
-            userId: userId,
-            content: data.content,
-            mediaType: data.mediaType || 'text',
-            mediaUrl: data.mediaUrl || '',
-          });
+            clients.get(userId)?.push(ws);
+            
+            ws.send(JSON.stringify({ type: 'auth_success' }));
+          }
           
-          // Get room members to broadcast message
-          const roomMembers = await storage.getRoomMembers(data.roomId);
-          
-          // Broadcast message to all room members
-          roomMembers.forEach(member => {
-            const memberConnections = clients.get(member.id) || [];
-            memberConnections.forEach(client => {
+          // Handle different message types
+          if (data.type === 'private_message' && userId !== null) {
+            const receiverConnections = clients.get(data.receiverId) || [];
+            
+            // Save message to database
+            const messageData = await storage.createMessage({
+              senderId: userId,
+              receiverId: data.receiverId,
+              content: data.content,
+              mediaType: data.mediaType || 'text',
+              mediaUrl: data.mediaUrl || '',
+            });
+            
+            // Send message to recipient if online
+            receiverConnections.forEach(client => {
               if (client.readyState === WebSocket.OPEN) {
                 client.send(JSON.stringify({
-                  type: 'chat_message',
-                  message: chatMessage
+                  type: 'private_message',
+                  message: messageData
                 }));
               }
             });
-          });
+          }
+          
+          // Handle chat room messages
+          if (data.type === 'chat_message' && userId !== null) {
+            // Save message to database
+            const chatMessage = await storage.createChatMessage({
+              roomId: data.roomId,
+              userId: userId,
+              content: data.content,
+              mediaType: data.mediaType || 'text',
+              mediaUrl: data.mediaUrl || '',
+            });
+            
+            // Get room members to broadcast message
+            const roomMembers = await storage.getRoomMembers(data.roomId);
+            
+            // Broadcast message to all room members
+            roomMembers.forEach(member => {
+              const memberConnections = clients.get(member.id) || [];
+              memberConnections.forEach(client => {
+                if (client.readyState === WebSocket.OPEN) {
+                  client.send(JSON.stringify({
+                    type: 'chat_message',
+                    message: chatMessage
+                  }));
+                }
+              });
+            });
+          }
+        } catch (error) {
+          console.error('WebSocket message error:', error);
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ 
+              type: 'error', 
+              message: 'Failed to process message' 
+            }));
+          }
         }
-      } catch (error) {
-        console.error('WebSocket message error:', error);
-      }
+      })().catch(error => {
+        console.error('Unhandled WebSocket async error:', error);
+      });
     });
     
     ws.on('close', () => {
@@ -138,6 +153,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const userConnections = clients.get(userId) || [];
         clients.set(userId, userConnections.filter(conn => conn !== ws));
       }
+    });
+    
+    ws.on('error', (error) => {
+      console.error('WebSocket error:', error);
     });
   });
   
@@ -274,7 +293,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  app.post('/api/users/:id/profile-picture', upload.single('image'), async (req, res) => {
+  app.post('/api/users/:id/profile-picture', upload.single('image'), async (req: MulterRequest, res) => {
     try {
       const userId = parseInt(req.params.id);
       const user = await storage.getUser(userId);
@@ -478,7 +497,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Media routes
-  app.post('/api/media', upload.single('file'), async (req, res) => {
+  app.post('/api/media', upload.single('file'), async (req: MulterRequest, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded' });
@@ -812,7 +831,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // File type detection route
-  app.post('/api/detect-file-type', upload.single('file'), async (req, res) => {
+  app.post('/api/detect-file-type', upload.single('file'), async (req: MulterRequest, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded' });
