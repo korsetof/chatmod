@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useLanguage } from '@/lib/language-context';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { Bell, Home, MessageSquareText, Users, Music, Search, Settings, LogOut, Globe } from 'lucide-react';
+import { Bell, Home, MessageSquareText, Users, Music, Search, Settings, LogOut, Globe, Shield, UserCog } from 'lucide-react';
 import LanguageSwitcher from './LanguageSwitcher';
 
 interface SidebarProps {
@@ -136,6 +136,26 @@ const Sidebar: React.FC<SidebarProps> = ({ open, setOpen, user }) => {
                 {t('chat_rooms')}
               </a>
             </Link>
+            
+            {(user.role === 'admin' || user.role === 'moderator') && (
+              <>
+                <Link href="/room-management">
+                  <a className={`flex items-center px-3 py-2 text-sm rounded-md ${location === '/room-management' ? 'bg-primary/10 text-primary font-medium' : 'text-neutral-500 hover:bg-gray-100'} transition duration-150`}>
+                    <UserCog className="h-5 w-5 mr-3" />
+                    {t('room_management')}
+                  </a>
+                </Link>
+                
+                {user.role === 'admin' && (
+                  <Link href="/admin">
+                    <a className={`flex items-center px-3 py-2 text-sm rounded-md ${location === '/admin' ? 'bg-primary/10 text-primary font-medium' : 'text-neutral-500 hover:bg-gray-100'} transition duration-150`}>
+                      <Shield className="h-5 w-5 mr-3" />
+                      {t('admin_panel')}
+                    </a>
+                  </Link>
+                )}
+              </>
+            )}
           </div>
 
           {chatRooms && chatRooms.length > 0 && (

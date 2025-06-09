@@ -14,6 +14,8 @@ import MessagesPage from "@/pages/messages";
 import ChatroomsPage from "@/pages/chatrooms";
 import DiscoverPage from "@/pages/discover";
 import SettingsPage from "@/pages/settings";
+import AdminPage from "@/pages/admin";
+import RoomManagementPage from "@/pages/room-management";
 import { AuthProvider } from "@/lib/auth-context";
 import { LanguageProvider } from "@/lib/language-context";
 
@@ -91,6 +93,22 @@ function Router() {
         {() => (
           <Layout>
             <SettingsPage />
+          </Layout>
+        )}
+      </Route>
+      
+      <Route path="/admin">
+        {() => (
+          <Layout>
+            <AdminPage />
+          </Layout>
+        )}
+      </Route>
+      
+      <Route path="/room-management">
+        {() => (
+          <Layout>
+            <RoomManagementPage />
           </Layout>
         )}
       </Route>
