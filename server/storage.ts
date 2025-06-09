@@ -5,16 +5,23 @@ import {
   chatMessages, type ChatMessage, type InsertChatMessage,
   roomMembers, type RoomMember, type InsertRoomMember,
   mediaItems, type MediaItem, type InsertMediaItem,
-  likes, type Like, type InsertLike
+  likes, type Like, type InsertLike,
+  adminLogs, type AdminLog, type InsertAdminLog,
+  verificationCodes, type VerificationCode, type InsertVerificationCode
 } from "@shared/schema";
 
 export interface IStorage {
   // User operations
   getUser(id: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUserProfile(id: number, data: Partial<User>): Promise<User | undefined>;
   getAllUsers(): Promise<User[]>;
+  searchUsersByUsername(query: string): Promise<User[]>;
+  updateUserOnlineStatus(userId: number, isOnline: boolean): Promise<void>;
+  banUser(userId: number, bannedBy: number, reason: string): Promise<void>;
+  unbanUser(userId: number): Promise<void>;
   
   // Message operations
   createMessage(message: InsertMessage): Promise<Message>;
@@ -27,6 +34,8 @@ export interface IStorage {
   getChatRooms(): Promise<ChatRoom[]>;
   getChatRoomById(id: number): Promise<ChatRoom | undefined>;
   getChatRoomsForUser(userId: number): Promise<ChatRoom[]>;
+  deleteChatRoom(roomId: number): Promise<void>;
+  updateChatRoom(roomId: number, data: Partial<ChatRoom>): Promise<ChatRoom | undefined>;
   
   // Chat message operations
   createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
@@ -36,6 +45,8 @@ export interface IStorage {
   addUserToRoom(member: InsertRoomMember): Promise<RoomMember>;
   removeUserFromRoom(roomId: number, userId: number): Promise<void>;
   getRoomMembers(roomId: number): Promise<User[]>;
+  updateRoomMemberRole(roomId: number, userId: number, role: string): Promise<void>;
+  getRoomMemberRole(roomId: number, userId: number): Promise<string | undefined>;
   
   // Media operations
   createMediaItem(item: InsertMediaItem): Promise<MediaItem>;
@@ -48,6 +59,16 @@ export interface IStorage {
   getLikesBetweenUsers(user1Id: number, user2Id: number): Promise<Like[]>;
   getLikesByUser(userId: number): Promise<Like[]>;
   getMatches(userId: number): Promise<User[]>;
+  
+  // Admin operations
+  createAdminLog(log: InsertAdminLog): Promise<AdminLog>;
+  getAdminLogs(limit?: number): Promise<AdminLog[]>;
+  
+  // Verification operations
+  createVerificationCode(code: InsertVerificationCode): Promise<VerificationCode>;
+  getVerificationCode(email: string, code: string, type: string): Promise<VerificationCode | undefined>;
+  markVerificationCodeAsUsed(id: number): Promise<void>;
+  cleanupExpiredCodes(): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -58,6 +79,8 @@ export class MemStorage implements IStorage {
   private roomMembers: Map<number, RoomMember>;
   private mediaItems: Map<number, MediaItem>;
   private likes: Map<number, Like>;
+  private adminLogs: Map<number, AdminLog>;
+  private verificationCodes: Map<number, VerificationCode>;
   
   currentUserId: number;
   currentMessageId: number;
@@ -66,6 +89,8 @@ export class MemStorage implements IStorage {
   currentRoomMemberId: number;
   currentMediaItemId: number;
   currentLikeId: number;
+  currentAdminLogId: number;
+  currentVerificationCodeId: number;
 
   constructor() {
     this.users = new Map();
@@ -75,6 +100,8 @@ export class MemStorage implements IStorage {
     this.roomMembers = new Map();
     this.mediaItems = new Map();
     this.likes = new Map();
+    this.adminLogs = new Map();
+    this.verificationCodes = new Map();
     
     this.currentUserId = 1;
     this.currentMessageId = 1;
@@ -83,6 +110,8 @@ export class MemStorage implements IStorage {
     this.currentRoomMemberId = 1;
     this.currentMediaItemId = 1;
     this.currentLikeId = 1;
+    this.currentAdminLogId = 1;
+    this.currentVerificationCodeId = 1;
     
     // Initialize with sample data
     this.initializeData();
