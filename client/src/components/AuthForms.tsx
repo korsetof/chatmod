@@ -196,7 +196,7 @@ function RegisterForm({ onSuccess }: RegisterFormProps) {
       // Remove confirmPassword as it's not part of our API schema
       const { confirmPassword, ...userData } = values;
       
-      const response = await apiRequest('/api/auth/register', 'POST', userData);
+      const response = await apiRequest('POST', '/api/auth/register', userData);
       onSuccess(values.email);
     } catch (error) {
       toast({

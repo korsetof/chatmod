@@ -28,7 +28,7 @@ export function EmailVerification({
   // Send verification code mutation
   const sendCodeMutation = useMutation({
     mutationFn: async (emailAddress: string) => {
-      return apiRequest('/api/auth/send-verification', 'POST', {
+      return apiRequest('POST', '/api/auth/send-verification', {
         email: emailAddress,
       });
     },
@@ -51,7 +51,7 @@ export function EmailVerification({
   // Verify code mutation
   const verifyCodeMutation = useMutation({
     mutationFn: async ({ email, code }: { email: string; code: string }) => {
-      return apiRequest('/api/auth/verify-email', 'POST', {
+      return apiRequest('POST', '/api/auth/verify-email', {
         email,
         code,
       });
