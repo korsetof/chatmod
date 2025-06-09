@@ -78,7 +78,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (!clients.has(userId)) {
               clients.set(userId, []);
             }
-            clients.get(userId)?.push(ws);
+            clients.get(userId)!.push(ws);
             
             ws.send(JSON.stringify({ type: 'auth_success' }));
           }
