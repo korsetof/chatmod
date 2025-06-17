@@ -1,5 +1,5 @@
 import { pgTable, text, serial, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
+import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // User schema
@@ -202,3 +202,52 @@ export const insertVerificationCodeSchema = createInsertSchema(verificationCodes
 
 export type InsertVerificationCode = z.infer<typeof insertVerificationCodeSchema>;
 export type VerificationCode = typeof verificationCodes.$inferSelect;
+
+// Таблица для токенов пользователей
+export const userTokens = pgTable('user_tokens', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id),
+  token: text('token').notNull().unique(),
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').defaultNow()
+});
+
+// Таблица для шаблонов
+export const templates = pgTable('templates', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull(),
+  content: text('content').notNull(),
+  type: text('type').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow()
+});
+
+// Таблица для шаблонов письма
+export const writingTemplates = pgTable('writing_templates', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull(),
+  content: text('content').notNull(),
+  category: text('category').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow()
+});
+
+// Схемы для валидации
+export const insertUserTokenSchema = createInsertSchema(userTokens);
+export const selectUserTokenSchema = createSelectSchema(userTokens);
+
+export const insertTemplateSchema = createInsertSchema(templates);
+export const selectTemplateSchema = createSelectSchema(templates);
+
+export const insertWritingTemplateSchema = createInsertSchema(writingTemplates);
+export const selectWritingTemplateSchema = createSelectSchema(writingTemplates);
+
+// Типы
+export type UserToken = z.infer<typeof selectUserTokenSchema>;
+export type InsertUserToken = z.infer<typeof insertUserTokenSchema>;
+
+export type Template = z.infer<typeof selectTemplateSchema>;
+export type InsertTemplate = z.infer<typeof insertTemplateSchema>;
+
+export type WritingTemplate = z.infer<typeof selectWritingTemplateSchema>;
+export type InsertWritingTemplate = z.infer<typeof insertWritingTemplateSchema>;

@@ -8,10 +8,29 @@ import path from "path";
 import fs from "fs";
 import { z } from "zod";
 import { sendVerificationEmail, generateVerificationCode, getMimeTypeFromExtension, getMediaTypeFromMime } from "./email";
+import { authMiddleware, adminMiddleware, type AuthRequest } from "./middleware/auth";
+
+// Type guard function
+function assertNumber(value: number | null): asserts value is number {
+  if (value === null) {
+    throw new Error('Value cannot be null');
+  }
+}
 
 // Extend Express Request type to include file property
 interface MulterRequest extends Request {
   file?: Express.Multer.File;
+}
+
+// WebSocket message types
+interface WebSocketMessage {
+  type: string;
+  userId?: number;
+  receiverId?: number;
+  roomId?: number;
+  content?: string;
+  mediaType?: string;
+  mediaUrl?: string;
 }
 
 // Set up multer for file uploads
@@ -65,74 +84,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
   wss.on('connection', (ws) => {
     let userId: number | null = null;
     
+    const handlePrivateMessage = async (data: WebSocketMessage) => {
+      if (!userId || !data.receiverId) return;
+      
+      const receiverConnections = clients.get(data.receiverId) || [];
+      const messageData = await storage.createMessage({
+        senderId: userId,
+        receiverId: data.receiverId,
+        content: data.content || '',
+        mediaType: data.mediaType || 'text',
+        mediaUrl: data.mediaUrl || '',
+      });
+
+      receiverConnections.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({
+            type: 'private_message',
+            message: messageData
+          }));
+        }
+      });
+    };
+
+    const handleChatMessage = async (data: WebSocketMessage) => {
+      if (!userId || !data.roomId) return;
+
+      const chatMessage = await storage.createChatMessage({
+        roomId: data.roomId,
+        userId: userId,
+        content: data.content || '',
+        mediaType: data.mediaType || 'text',
+        mediaUrl: data.mediaUrl || '',
+      });
+
+      const roomMembers = await storage.getRoomMembers(data.roomId);
+      roomMembers.forEach(member => {
+        const memberConnections = clients.get(member.id) || [];
+        memberConnections.forEach(client => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({
+              type: 'chat_message',
+              message: chatMessage
+            }));
+          }
+        });
+      });
+    };
+
     ws.on('message', (message) => {
       (async () => {
         try {
-          const data = JSON.parse(message.toString());
+          const data = JSON.parse(message.toString()) as WebSocketMessage;
           
-          // Handle authentication
           if (data.type === 'auth' && typeof data.userId === 'number') {
             userId = data.userId;
-            
-            // Store client connection
             if (!clients.has(userId)) {
               clients.set(userId, []);
             }
             clients.get(userId)!.push(ws);
-            
             ws.send(JSON.stringify({ type: 'auth_success' }));
           }
           
-          // Handle different message types
-          if (data.type === 'private_message' && userId !== null) {
-            const receiverConnections = clients.get(data.receiverId) || [];
-            
-            // Save message to database
-            const messageData = await storage.createMessage({
-              senderId: userId,
-              receiverId: data.receiverId,
-              content: data.content,
-              mediaType: data.mediaType || 'text',
-              mediaUrl: data.mediaUrl || '',
-            });
-            
-            // Send message to recipient if online
-            receiverConnections.forEach(client => {
-              if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({
-                  type: 'private_message',
-                  message: messageData
-                }));
-              }
-            });
+          if (data.type === 'private_message') {
+            await handlePrivateMessage(data);
           }
           
-          // Handle chat room messages
-          if (data.type === 'chat_message' && userId !== null) {
-            // Save message to database
-            const chatMessage = await storage.createChatMessage({
-              roomId: data.roomId,
-              userId: userId,
-              content: data.content,
-              mediaType: data.mediaType || 'text',
-              mediaUrl: data.mediaUrl || '',
-            });
-            
-            // Get room members to broadcast message
-            const roomMembers = await storage.getRoomMembers(data.roomId);
-            
-            // Broadcast message to all room members
-            roomMembers.forEach(member => {
-              const memberConnections = clients.get(member.id) || [];
-              memberConnections.forEach(client => {
-                if (client.readyState === WebSocket.OPEN) {
-                  client.send(JSON.stringify({
-                    type: 'chat_message',
-                    message: chatMessage
-                  }));
-                }
-              });
-            });
+          if (data.type === 'chat_message') {
+            await handleChatMessage(data);
           }
         } catch (error) {
           console.error('WebSocket message error:', error);
@@ -225,10 +243,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: 'Invalid username or password' });
       }
       
-      // Don't return password in response
+      // Генерируем токен
+      const token = await storage.createUserToken(user.id);
+      
+      // Не возвращаем пароль в ответе
       const { password: _, ...userWithoutPassword } = user;
       
-      res.status(200).json(userWithoutPassword);
+      res.status(200).json({
+        user: userWithoutPassword,
+        token
+      });
     } catch (error) {
       res.status(500).json({ message: 'Login failed' });
     }
@@ -848,6 +872,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       res.status(500).json({ message: 'Failed to detect file type' });
+    }
+  });
+
+  // Защищенные маршруты
+  app.get('/api/templates', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const templates = await storage.getTemplates();
+      res.json(templates);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to get templates' });
+    }
+  });
+
+  app.get('/api/writing/templates', authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const templates = await storage.getWritingTemplates();
+      res.json(templates);
+    } catch (error) {
+      res.status(500).json({ message: 'Failed to get writing templates' });
     }
   });
 

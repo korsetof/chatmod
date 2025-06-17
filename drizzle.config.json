@@ -1,0 +1,10 @@
+{
+  "schema": "./shared/schema.ts",
+  "out": "./drizzle/migrations",
+  "driver": "pg",
+  "dbCredentials": {
+    "connectionString": "postgres://your_username:your_password@localhost:5432/your_database"
+  },
+  "verbose": true,
+  "strict": true
+} 

@@ -7,8 +7,14 @@ import {
   mediaItems, type MediaItem, type InsertMediaItem,
   likes, type Like, type InsertLike,
   adminLogs, type AdminLog, type InsertAdminLog,
-  verificationCodes, type VerificationCode, type InsertVerificationCode
+  verificationCodes, type VerificationCode, type InsertVerificationCode,
+  userTokens, type UserToken, type InsertUserToken,
+  templates, type Template, type InsertTemplate,
+  writingTemplates, type WritingTemplate, type InsertWritingTemplate
 } from "@shared/schema";
+import { db } from './db';
+import { eq, and, or, desc } from 'drizzle-orm';
+import crypto from 'crypto';
 
 export interface IStorage {
   // User operations
@@ -69,6 +75,15 @@ export interface IStorage {
   getVerificationCode(email: string, code: string, type: string): Promise<VerificationCode | undefined>;
   markVerificationCodeAsUsed(id: number): Promise<void>;
   cleanupExpiredCodes(): Promise<void>;
+
+  // Token operations
+  createUserToken(userId: number): Promise<string>;
+  getUserByToken(token: string): Promise<User | null>;
+  deleteUserToken(token: string): Promise<void>;
+
+  // Template operations
+  getTemplates(): Promise<Template[]>;
+  getWritingTemplates(): Promise<WritingTemplate[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -81,6 +96,7 @@ export class MemStorage implements IStorage {
   private likes: Map<number, Like>;
   private adminLogs: Map<number, AdminLog>;
   private verificationCodes: Map<number, VerificationCode>;
+  private userTokens: Map<string, UserToken>;
   
   currentUserId: number;
   currentMessageId: number;
@@ -102,6 +118,7 @@ export class MemStorage implements IStorage {
     this.likes = new Map();
     this.adminLogs = new Map();
     this.verificationCodes = new Map();
+    this.userTokens = new Map();
     
     this.currentUserId = 1;
     this.currentMessageId = 1;
@@ -213,7 +230,10 @@ export class MemStorage implements IStorage {
       (message) => 
         (message.senderId === user1Id && message.receiverId === user2Id) ||
         (message.senderId === user2Id && message.receiverId === user1Id)
-    ).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    ).sort((a, b) => {
+      if (!a.createdAt || !b.createdAt) return 0;
+      return a.createdAt.getTime() - b.createdAt.getTime();
+    });
   }
   
   async markMessagesAsRead(userId: number, otherUserId: number): Promise<void> {
@@ -286,7 +306,10 @@ export class MemStorage implements IStorage {
   async getChatMessagesByRoomId(roomId: number): Promise<ChatMessage[]> {
     return Array.from(this.chatMessages.values())
       .filter(message => message.roomId === roomId)
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      .sort((a, b) => {
+        if (!a.createdAt || !b.createdAt) return 0;
+        return a.createdAt.getTime() - b.createdAt.getTime();
+      });
   }
   
   // Room member operations
@@ -340,13 +363,19 @@ export class MemStorage implements IStorage {
   async getMediaItemsByUserId(userId: number): Promise<MediaItem[]> {
     return Array.from(this.mediaItems.values())
       .filter(item => item.userId === userId)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      .sort((a, b) => {
+        if (!a.createdAt || !b.createdAt) return 0;
+        return b.createdAt.getTime() - a.createdAt.getTime();
+      });
   }
   
   async getPublicMediaItems(): Promise<MediaItem[]> {
     return Array.from(this.mediaItems.values())
       .filter(item => item.isPublic)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      .sort((a, b) => {
+        if (!a.createdAt || !b.createdAt) return 0;
+        return b.createdAt.getTime() - a.createdAt.getTime();
+      });
   }
   
   async getMediaItemById(id: number): Promise<MediaItem | undefined> {
@@ -515,7 +544,15 @@ export class MemStorage implements IStorage {
   async createAdminLog(log: InsertAdminLog): Promise<AdminLog> {
     const id = this.currentAdminLogId++;
     const now = new Date();
-    const newLog: AdminLog = { ...log, id, createdAt: now };
+    const newLog: AdminLog = {
+      id,
+      action: log.action,
+      createdAt: now,
+      adminId: log.adminId,
+      targetType: log.targetType,
+      targetId: log.targetId,
+      details: log.details || null
+    };
     this.adminLogs.set(id, newLog);
     return newLog;
   }
@@ -565,6 +602,55 @@ export class MemStorage implements IStorage {
         this.verificationCodes.delete(id);
       }
     }
+  }
+
+  // Token operations
+  async createUserToken(userId: number): Promise<string> {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 дней
+
+    await db.insert(userTokens).values({
+      userId,
+      token,
+      expiresAt
+    });
+
+    return token;
+  }
+
+  async getUserByToken(token: string): Promise<User | null> {
+    const result = await db
+      .select()
+      .from(userTokens)
+      .where(
+        and(
+          eq(userTokens.token, token),
+          eq(userTokens.expiresAt, new Date())
+        )
+      )
+      .leftJoin(users, eq(userTokens.userId, users.id))
+      .limit(1);
+
+    if (result.length === 0) {
+      return null;
+    }
+
+    return result[0].user;
+  }
+
+  async deleteUserToken(token: string): Promise<void> {
+    await db
+      .delete(userTokens)
+      .where(eq(userTokens.token, token));
+  }
+
+  // Template operations
+  async getTemplates(): Promise<Template[]> {
+    return await db.select().from(templates);
+  }
+
+  async getWritingTemplates(): Promise<WritingTemplate[]> {
+    return await db.select().from(writingTemplates);
   }
 }
 
