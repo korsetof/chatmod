@@ -1,0 +1,31 @@
+stages:
+  - test
+  - sonarqube
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - node_modules/
+    - .sonar/cache
+
+sonarqube-check:
+  stage: sonarqube
+  image: node:20
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar" # Кэш для сканера
+  before_script:
+    - npm ci
+    # Запускаем тесты с покрытием, если они настроены
+    - npm run test -- --coverage
+  script:
+    - npx sonar-scanner
+      -Dsonar.projectKey=korsetof_chatmod
+      -Dsonar.projectName=ChatMod
+      -Dsonar.projectKey=CI-CD \
+      -Dsonar.sources=. \
+      -Dsonar.host.url=http://localhost:9000
+      # -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+  only:
+    - main
+    - develop
+    - merge_requests
